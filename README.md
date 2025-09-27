@@ -38,7 +38,8 @@ cd KSP-Game
 # Install dependencies
 npm install
 
-# Start the game
+# Build and Start the game
+npm run build
 npm start
 ```
 
@@ -55,10 +56,6 @@ npm start
 - **G**: Toggle landing gear
 - **B**: Toggle brakes
 - **Esc**: Pause menu
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to submit pull requests or open issues to help improve the game.
 
 ## 📜 License
 
