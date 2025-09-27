@@ -1,6 +1,7 @@
 import { Colony, ModuleType } from './colony';
 import { UI } from './ui';
 import { Grid, Tile } from './grid';
+import { MenuSystem, GameState } from './menu';
 
 export class Game {
     private canvas: HTMLCanvasElement;
@@ -8,10 +9,12 @@ export class Game {
     private colony: Colony;
     private ui: UI;
     private grid: Grid;
+    private menuSystem: MenuSystem;
     private selectedToPlace: ModuleType | null = null;
     private hover: { x: number, y: number } | null = null;
     // Track module placements to infer active mining rigs
     private placements: { x: number, y: number, type: ModuleType }[] = [];
+    private isPaused: boolean = false;
 
     // Player avatar
     private px: number; // grid X
@@ -22,10 +25,10 @@ export class Game {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d')!;
         this.colony = new Colony();
-    this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt));
+    this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt), () => this.openInGameMenu(), () => this.cancelPlacement());
     // Expand map by increasing the number of tiles (not pixel size)
     this.grid = new Grid(60, 36);
-
+        
         // Place command center at center
         const cx = Math.floor(this.grid.width / 2), cy = Math.floor(this.grid.height / 2);
         this.grid.set(cx, cy, 'C');
@@ -34,8 +37,19 @@ export class Game {
         this.px = cx + 1;
         this.py = cy;
 
+        // Resize canvas first to set proper dimensions
         this.resizeCanvas();
-        window.addEventListener('resize', () => this.resizeCanvas());
+        
+        // Initialize menu system after canvas is properly sized
+        this.menuSystem = new MenuSystem(canvas, (state) => this.onMenuStateChange(state));
+        
+        // Ensure we start in main menu state
+        this.menuSystem.setState(GameState.MainMenu);
+        
+        window.addEventListener('resize', () => {
+            this.resizeCanvas();
+            this.menuSystem.onResize();
+        });
     this.canvas.addEventListener('click', (e) => this.handleMouseClick(e));
     this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         window.addEventListener('keydown', (e) => this.keys[e.key.toLowerCase()] = true);
@@ -47,16 +61,67 @@ export class Game {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
         // Scale grid cell size to fit larger maps while keeping UI space
-        const availableW = this.canvas.width - 380; // leave UI margin
+        const availableW = this.canvas.width - 390; // leave UI margin
         const availableH = this.canvas.height - 40;
         this.grid.cellW = Math.floor(Math.max(10, Math.min(22, availableW / this.grid.width)));
         this.grid.cellH = Math.floor(Math.max(14, Math.min(28, availableH / this.grid.height)));
-        this.grid.originX = 360;
+        this.grid.originX = 370;
         this.grid.originY = 20;
     }
 
     private beginPlacement(type: ModuleType) {
         this.selectedToPlace = type;
+        this.ui.setPlacingMode(true);
+    }
+
+    private cancelPlacement() {
+        this.selectedToPlace = null;
+        this.ui.setPlacingMode(false);
+    }
+
+    private onMenuStateChange(state: GameState) {
+        switch (state) {
+            case GameState.MainMenu:
+                // Only reset game state when returning to main menu (not on initial load)
+                if (this.menuSystem && this.menuSystem.getState() !== GameState.MainMenu) {
+                    this.resetGame();
+                }
+                this.isPaused = false;
+                break;
+            case GameState.Playing:
+                this.isPaused = false;
+                break;
+            case GameState.Paused:
+            case GameState.Settings:
+                this.isPaused = true;
+                break;
+        }
+    }
+
+    private openInGameMenu() {
+        this.menuSystem.setState(GameState.Paused);
+    }
+
+    private resetGame() {
+        // Reset colony
+        this.colony = new Colony();
+        this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt), () => this.openInGameMenu(), () => this.cancelPlacement());
+        
+        // Reset grid
+        this.grid = new Grid(60, 36);
+        
+        // Place command center at center
+        const cx = Math.floor(this.grid.width / 2), cy = Math.floor(this.grid.height / 2);
+        this.grid.set(cx, cy, 'C');
+        
+        // Reset player position
+        this.px = cx + 1;
+        this.py = cy;
+        
+        // Clear placements and selections
+        this.placements = [];
+        this.selectedToPlace = null;
+        this.hover = null;
     }
 
     private symbolFor(type: ModuleType): Tile {
@@ -74,6 +139,11 @@ export class Game {
     }
 
     private handleMouseClick(event: MouseEvent) {
+        // Menu system handles its own clicks
+        if (this.menuSystem.getState() !== GameState.Playing) {
+            return;
+        }
+        
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
         const mouseY = event.clientY - rect.top;
@@ -99,13 +169,20 @@ export class Game {
                     this.colony.buildModule(placing, cost);
                     this.grid.set(x, y, this.symbolFor(placing));
                     this.placements.push({ x, y, type: placing });
-                    this.selectedToPlace = null;
+                    // Keep in placement mode for continuous building
+                    // this.selectedToPlace = null;
                 }
             }
         }
     }
 
     private handleMouseMove(event: MouseEvent) {
+        // Only handle mouse moves when playing
+        if (this.menuSystem.getState() !== GameState.Playing) {
+            this.hover = null;
+            return;
+        }
+        
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
         const mouseY = event.clientY - rect.top;
@@ -134,6 +211,11 @@ export class Game {
     // Simple key repeat cooldown for grid-snapped movement
     private moveCooldown = 0;
     private stepPlayer(dt: number) {
+        // Only move player when game is actually playing and not paused
+        if (this.menuSystem.getState() !== GameState.Playing || this.isPaused) {
+            return;
+        }
+        
         this.moveCooldown -= dt;
         const wantLeft = this.keys['arrowleft'] || this.keys['a'];
         const wantRight = this.keys['arrowright'] || this.keys['d'];
@@ -176,7 +258,9 @@ export class Game {
         this.ctx.save();
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = '14px Consolas, monospace';
-        this.ctx.fillText('Move: WASD / Arrow Keys | Place: Click a Place button, then click a grid tile (R for Mining).', 360, this.canvas.height - 20);
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'alphabetic';
+        this.ctx.fillText('Move: WASD / Arrow Keys | Place: Click a Place button, then click a grid tile (R for Mining).', 370, this.canvas.height - 20);
         this.ctx.restore();
     }
 
@@ -186,44 +270,56 @@ export class Game {
         const dt = Math.min(0.05, (now - this.lastTime) / 1000);
         this.lastTime = now;
 
-        // Update game state
-        // Count mining rigs on resource tiles so Colony can compute proper materials gen
-        let activeRigs = 0;
-        for (let y = 0; y < this.grid.height; y++) {
-            for (let x = 0; x < this.grid.width; x++) {
-                if (this.grid.get(x, y) === 'M' && this.grid.resources[y][x]) activeRigs++;
+        // Only update game state if playing and not paused
+        if (this.menuSystem.getState() === GameState.Playing && !this.isPaused) {
+            // Count mining rigs on resource tiles so Colony can compute proper materials gen
+            let activeRigs = 0;
+            for (let y = 0; y < this.grid.height; y++) {
+                for (let x = 0; x < this.grid.width; x++) {
+                    if (this.grid.get(x, y) === 'M' && this.grid.resources[y][x]) activeRigs++;
+                }
             }
+            this.colony.update();
+            this.stepPlayer(dt);
         }
-    this.colony.update();
-        this.stepPlayer(dt);
 
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Set background
+        // Always set background
         this.ctx.fillStyle = '#0a0a1a';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw UI + grid + player
-        this.ui.draw();
-        this.grid.draw(this.ctx);
-        // Hover ghost for placement
-        if (this.selectedToPlace && this.hover) {
-            const { x, y } = this.hover;
-            const ok = this.isValidPlacement(x, y, this.selectedToPlace);
-            const { px, py } = this.grid.toPixel(x, y);
+        // Draw game content only when playing
+        if (this.menuSystem.getState() === GameState.Playing) {
+            // Draw UI + grid + player
             this.ctx.save();
-            this.ctx.fillStyle = ok ? 'rgba(0,255,0,0.25)' : 'rgba(255,0,0,0.25)';
-            this.ctx.fillRect(px, py, this.grid.cellW, this.grid.cellH);
-            // show glyph of module to be placed
-            this.ctx.fillStyle = ok ? '#00ff00' : '#ff5555';
-            this.ctx.font = `${Math.max(12, Math.floor(this.grid.cellH * 0.9))}px Consolas, 'Courier New', monospace`;
-            this.ctx.textBaseline = 'top';
-            this.ctx.fillText(this.symbolFor(this.selectedToPlace), px, py);
+            this.ctx.textAlign = 'left';
+            this.ctx.textBaseline = 'alphabetic';
+            this.ui.draw();
             this.ctx.restore();
+            this.grid.draw(this.ctx);
+            // Hover ghost for placement
+            if (this.selectedToPlace && this.hover && !this.isPaused) {
+                const { x, y } = this.hover;
+                const ok = this.isValidPlacement(x, y, this.selectedToPlace);
+                const { px, py } = this.grid.toPixel(x, y);
+                this.ctx.save();
+                this.ctx.fillStyle = ok ? 'rgba(0,255,0,0.25)' : 'rgba(255,0,0,0.25)';
+                this.ctx.fillRect(px, py, this.grid.cellW, this.grid.cellH);
+                // show glyph of module to be placed
+                this.ctx.fillStyle = ok ? '#00ff00' : '#ff5555';
+                this.ctx.font = `${Math.max(12, Math.floor(this.grid.cellH * 0.9))}px Consolas, 'Courier New', monospace`;
+                this.ctx.textBaseline = 'top';
+                this.ctx.fillText(this.symbolFor(this.selectedToPlace), px, py);
+                this.ctx.restore();
+            }
+            this.drawPlayer();
+            this.drawHelp();
         }
-        this.drawPlayer();
-        this.drawHelp();
+        
+        // Always draw menu system (handles its own visibility)
+        this.menuSystem.draw();
 
         // Loop
         requestAnimationFrame(() => this.gameLoop());

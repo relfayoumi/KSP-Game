@@ -7,32 +7,63 @@ interface Button {
     enabled?: boolean;
 }
 
+enum OverlayState {
+    None,
+    MainOverlay,
+    BuildList
+}
+
+enum BuildCategory {
+    Harvesting,
+    Habitation,
+    Power
+}
+
 export class UI {
     private ctx: CanvasRenderingContext2D;
     private colony: Colony;
     public buttons: Button[] = [];
     private onSelectToPlace: (type: ModuleType) => void;
+    private onOpenMenu?: () => void;
+    private onCancelPlacement?: () => void;
+    private overlayState: OverlayState = OverlayState.None;
+    private buildCategory: BuildCategory | null = null;
+    private placingMode: boolean = false;
+    private showQuickButtons: boolean = false;
 
-    constructor(ctx: CanvasRenderingContext2D, colony: Colony, onSelectToPlace: (type: ModuleType) => void) {
+    constructor(ctx: CanvasRenderingContext2D, colony: Colony, onSelectToPlace: (type: ModuleType) => void, onOpenMenu?: () => void, onCancelPlacement?: () => void) {
         this.ctx = ctx;
         this.colony = colony;
         this.onSelectToPlace = onSelectToPlace;
+        this.onOpenMenu = onOpenMenu;
+        this.onCancelPlacement = onCancelPlacement;
     }
 
     draw() {
-        // reset buttons per frame
+        // Reset buttons per frame
         this.buttons = [];
+        // Establish a known text alignment/baseline so menu/title code from previous frames doesn't leak
+        this.ctx.save();
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'alphabetic';
+
         this.drawResourcePanel();
         this.drawModulePanel();
-        this.drawBuildPanel();
+        
+        this.drawMenuButton();
+        this.drawCancelButton();
+        this.drawBuildOverlay();
+
+        // Restore to avoid leaking our alignment into game / grid rendering
+        this.ctx.restore();
     }
 
     private drawResourcePanel() {
         // resources + kerbals + power net
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    this.ctx.fillRect(10, 10, 320, 150);
+        this.ctx.fillRect(10, 10, 340, 150);
         this.ctx.strokeStyle = '#00ff00';
-    this.ctx.strokeRect(10, 10, 320, 150);
+        this.ctx.strokeRect(10, 10, 340, 150);
 
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = '16px Arial';
@@ -58,9 +89,9 @@ export class UI {
 
     private drawModulePanel() {
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    this.ctx.fillRect(10, 160, 320, 170);
+        this.ctx.fillRect(10, 170, 340, 160);
         this.ctx.strokeStyle = '#00ff00';
-    this.ctx.strokeRect(10, 160, 320, 170);
+        this.ctx.strokeRect(10, 170, 340, 160);
 
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = '16px Arial';
@@ -74,84 +105,417 @@ export class UI {
         });
     }
 
-    private drawBuildPanel() {
-        const panelX = 10;
-        const panelY = 340;
-        const panelWidth = 340;
-        const panelHeight = 280;
 
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        this.ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+
+
+
+
+
+    private drawMenuButton() {
+        if (!this.onOpenMenu) return;
+
+        const canvas = this.ctx.canvas;
+        const buttonWidth = 120;
+        const buttonHeight = 35;
+        const margin = 15;
+        
+        const menuBtn: Button = {
+            rect: { 
+                x: margin, 
+                y: canvas.height - buttonHeight - margin, 
+                width: buttonWidth, 
+                height: buttonHeight 
+            },
+            text: 'Menu (ESC)',
+            onClick: () => { this.toggleQuickButtons(); },
+            enabled: true
+        };
+        
+        this.buttons.push(menuBtn);
+        
+        // Draw the menu button (isolate alignment changes)
+        this.ctx.save();
+        this.ctx.fillStyle = 'rgba(255, 165, 0, 0.2)';
+        this.ctx.fillRect(menuBtn.rect.x, menuBtn.rect.y, menuBtn.rect.width, menuBtn.rect.height);
+        this.ctx.strokeStyle = '#ffaa00';
+        this.ctx.strokeRect(menuBtn.rect.x, menuBtn.rect.y, menuBtn.rect.width, menuBtn.rect.height);
+        
+        this.ctx.fillStyle = '#ffaa00';
+        this.ctx.font = '14px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(
+            menuBtn.text, 
+            menuBtn.rect.x + menuBtn.rect.width / 2, 
+            menuBtn.rect.y + menuBtn.rect.height / 2
+        );
+        this.ctx.restore();
+        
+        // Draw quick buttons if they should be shown
+        if (this.showQuickButtons) {
+            this.drawQuickButtons(menuBtn);
+        }
+    }
+
+    private toggleQuickButtons() {
+        if (this.showQuickButtons) {
+            // Second press - open main menu
+            this.showQuickButtons = false;
+            if (this.onOpenMenu) {
+                this.onOpenMenu();
+            }
+        } else {
+            // First press - show quick buttons
+            this.showQuickButtons = true;
+        }
+    }
+
+    private drawQuickButtons(menuBtn: Button) {
+        const buttonWidth = 100;
+        const buttonHeight = 35;
+        const margin = 10;
+        
+        // Build button (above menu button)
+        const buildBtn: Button = {
+            rect: { 
+                x: menuBtn.rect.x + (menuBtn.rect.width - buttonWidth) / 2, 
+                y: menuBtn.rect.y - buttonHeight - margin, 
+                width: buttonWidth, 
+                height: buttonHeight 
+            },
+            text: 'Build',
+            onClick: () => { 
+                this.showQuickButtons = false;
+                this.showBuildOverlay(); 
+            },
+            enabled: true
+        };
+        
+        // RD button (to the right of menu button)
+        const rdBtn: Button = {
+            rect: { 
+                x: menuBtn.rect.x + menuBtn.rect.width + margin, 
+                y: menuBtn.rect.y, 
+                width: buttonWidth, 
+                height: buttonHeight 
+            },
+            text: 'R&D',
+            onClick: () => { 
+                this.showQuickButtons = false;
+                /* No functionality yet */ 
+            },
+            enabled: false
+        };
+        
+        this.buttons.push(buildBtn, rdBtn);
+        this.drawSimpleButton(buildBtn, '#00ff00');
+        this.drawSimpleButton(rdBtn, '#666666');
+    }
+
+    private drawCancelButton() {
+        // Cancel placement button (top right, only when placing)
+        if (this.placingMode) {
+            const canvas = this.ctx.canvas;
+            const buttonWidth = 100;
+            const buttonHeight = 35;
+            const margin = 15;
+            
+            const cancelBtn: Button = {
+                rect: { 
+                    x: canvas.width - buttonWidth - margin, 
+                    y: margin, 
+                    width: buttonWidth, 
+                    height: buttonHeight 
+                },
+                text: 'X',
+                onClick: () => { this.cancelPlacement(); },
+                enabled: true
+            };
+            this.buttons.push(cancelBtn);
+            this.drawSimpleButton(cancelBtn, '#ff4444');
+        }
+    }
+
+    private drawSimpleButton(btn: Button, color: string) {
+        const enabled = btn.enabled !== false;
+        
+        this.ctx.save();
+        this.ctx.fillStyle = enabled ? `${color}30` : 'rgba(100, 100, 100, 0.2)';
+        this.ctx.fillRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+        this.ctx.strokeStyle = enabled ? color : '#666666';
+        this.ctx.strokeRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+        
+        this.ctx.fillStyle = enabled ? color : '#666666';
+        this.ctx.font = '14px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(
+            btn.text, 
+            btn.rect.x + btn.rect.width / 2, 
+            btn.rect.y + btn.rect.height / 2
+        );
+        this.ctx.restore();
+    }
+
+    private showBuildOverlay() {
+        this.overlayState = OverlayState.MainOverlay;
+    }
+
+    private cancelPlacement() {
+        this.placingMode = false;
+        this.overlayState = this.buildCategory !== null ? OverlayState.BuildList : OverlayState.MainOverlay;
+        this.showQuickButtons = true; // Show quick buttons again after canceling
+        if (this.onCancelPlacement) {
+            this.onCancelPlacement();
+        }
+    }
+
+    private drawBuildOverlay() {
+        if (this.overlayState === OverlayState.None) return;
+
+        const canvas = this.ctx.canvas;
+        let overlayWidth = 400;
+        let overlayHeight = 300;
+        
+        // Make overlay larger for building list
+        if (this.overlayState === OverlayState.BuildList) {
+            overlayWidth = 500;
+            overlayHeight = 400;
+        }
+        
+        const overlayX = (canvas.width - overlayWidth) / 2;
+        const overlayY = (canvas.height - overlayHeight) / 2;
+
+        // Draw overlay background
+        this.ctx.save();
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        this.ctx.fillRect(overlayX, overlayY, overlayWidth, overlayHeight);
         this.ctx.strokeStyle = '#00ff00';
-        this.ctx.strokeRect(panelX, panelY, panelWidth, panelHeight);
+        this.ctx.strokeRect(overlayX, overlayY, overlayWidth, overlayHeight);
 
+        // Close button (X)
+        const closeBtn: Button = {
+            rect: { 
+                x: overlayX + overlayWidth - 40, 
+                y: overlayY + 10, 
+                width: 30, 
+                height: 30 
+            },
+            text: 'X',
+            onClick: () => { this.overlayState = OverlayState.None; },
+            enabled: true
+        };
+        this.buttons.push(closeBtn);
+        this.drawSimpleButton(closeBtn, '#ff4444');
+
+        if (this.overlayState === OverlayState.MainOverlay) {
+            this.drawCategorySelection(overlayX, overlayY, overlayWidth, overlayHeight);
+        } else if (this.overlayState === OverlayState.BuildList && this.buildCategory !== null) {
+            this.drawBuildingList(overlayX, overlayY, overlayWidth, overlayHeight, this.buildCategory);
+        }
+
+        this.ctx.restore();
+    }
+
+    private drawCategorySelection(overlayX: number, overlayY: number, overlayWidth: number, overlayHeight: number) {
+        const canvas = this.ctx.canvas;
+        
+        // Title
         this.ctx.fillStyle = '#00ff00';
-        this.ctx.font = '16px Arial';
-        this.ctx.fillText('Build', 20, panelY + 20);
+        this.ctx.font = '20px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'top';
+        this.ctx.fillText('Build Menu', canvas.width / 2, overlayY + 20);
 
-        let y = panelY + 46;
+        // Category buttons
+        const categoryY = overlayY + 80;
+        const categoryWidth = 100;
+        const categoryHeight = 60;
+        const categorySpacing = 120;
+        const startX = overlayX + (overlayWidth - 3 * categoryWidth - 2 * (categorySpacing - categoryWidth)) / 2;
 
-        const buildables: ModuleType[] = [
-            ModuleType.Habitation,
-            ModuleType.Greenhouse,
-            ModuleType.ScienceLab,
-            ModuleType.SolarArray,
-            ModuleType.MiningRig
+        const categories = [
+            { name: 'Harvesting', category: BuildCategory.Harvesting, color: '#ffaa00' },
+            { name: 'Habitation\n& Life', category: BuildCategory.Habitation, color: '#00aaff' },
+            { name: 'Power', category: BuildCategory.Power, color: '#ffff00' }
         ];
 
-        buildables.forEach((type) => {
-            const cost = this.colony.getModuleCost(type);
-            const enabled = !!cost && this.colony.canAfford(cost);
+        categories.forEach((cat, index) => {
             const btn: Button = {
-                rect: { x: 20, y, width: 300, height: 48 },
-                text: `Place ${type}`,
-                onClick: () => { this.onSelectToPlace(type); },
-                enabled
+                rect: { 
+                    x: startX + index * categorySpacing, 
+                    y: categoryY, 
+                    width: categoryWidth, 
+                    height: categoryHeight 
+                },
+                text: cat.name,
+                onClick: () => { this.showBuildCategory(cat.category); },
+                enabled: true
             };
             this.buttons.push(btn);
-
-            this.drawButton(btn, cost);
-            y += 54;
+            
+            // Draw category button
+            this.ctx.fillStyle = `${cat.color}30`;
+            this.ctx.fillRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+            this.ctx.strokeStyle = cat.color;
+            this.ctx.strokeRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+            
+            this.ctx.fillStyle = cat.color;
+            this.ctx.font = '14px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            
+            // Handle multi-line text
+            const lines = cat.name.split('\n');
+            lines.forEach((line, lineIndex) => {
+                this.ctx.fillText(
+                    line,
+                    btn.rect.x + btn.rect.width / 2,
+                    btn.rect.y + btn.rect.height / 2 + (lineIndex - (lines.length - 1) / 2) * 16
+                );
+            });
         });
     }
 
-    private drawButton(btn: Button, cost?: Map<ResourceType, number>) {
-        const enabled = btn.enabled !== false;
-        // Button box
-        this.ctx.fillStyle = enabled ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)';
-        this.ctx.fillRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
-        this.ctx.strokeStyle = enabled ? '#00ff00' : '#ff4444';
-        this.ctx.strokeRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+    private drawBuildingList(overlayX: number, overlayY: number, overlayWidth: number, overlayHeight: number, category: BuildCategory) {
+        const canvas = this.ctx.canvas;
+        
+        // Back button
+        const backBtn: Button = {
+            rect: { 
+                x: overlayX + 10, 
+                y: overlayY + 10, 
+                width: 60, 
+                height: 30 
+            },
+            text: '← Back',
+            onClick: () => { this.overlayState = OverlayState.MainOverlay; },
+            enabled: true
+        };
+        this.buttons.push(backBtn);
+        this.drawSimpleButton(backBtn, '#888888');
+        
+        // Title
+        this.ctx.fillStyle = '#00ff00';
+        this.ctx.font = '20px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'top';
+        this.ctx.fillText(this.getCategoryName(category), canvas.width / 2, overlayY + 20);
 
-        // Text: two lines (label + cost), clipped to fit
-        const maxTextW = btn.rect.width - 16;
-    this.ctx.font = '14px Arial';
-        this.ctx.fillStyle = enabled ? '#00ff00' : '#ff8888';
-        const label = this.clipText(btn.text, maxTextW);
-    this.ctx.fillText(label, btn.rect.x + 8, btn.rect.y + 18);
+        // Building list
+        const buildings = this.getBuildingsForCategory(category);
+        const startY = overlayY + 70;
+        const buttonHeight = 80;
+        const buttonSpacing = 10;
+        const buttonWidth = overlayWidth - 40;
 
-        if (cost) {
-            this.ctx.font = '12px Arial';
-            const costStr = this.clipText(this.formatCost(cost), maxTextW);
-            this.ctx.fillText(costStr, btn.rect.x + 8, btn.rect.y + 36);
+        buildings.forEach((moduleType, index) => {
+            const cost = this.colony.getModuleCost(moduleType);
+            const isUnlocked = this.colony.isUnlocked(moduleType);
+            const canAfford = !!cost && this.colony.canAfford(cost);
+            const enabled = isUnlocked && canAfford;
+            
+            const btn: Button = {
+                rect: { 
+                    x: overlayX + 20, 
+                    y: startY + index * (buttonHeight + buttonSpacing), 
+                    width: buttonWidth, 
+                    height: buttonHeight 
+                },
+                text: moduleType,
+                onClick: () => { this.selectModuleFromCategory(moduleType); },
+                enabled: enabled
+            };
+            this.buttons.push(btn);
+            
+            // Draw building button
+            const bgColor = enabled ? 'rgba(0, 255, 0, 0.2)' : isUnlocked ? 'rgba(255, 0, 0, 0.2)' : 'rgba(100, 100, 100, 0.2)';
+            const borderColor = enabled ? '#00ff00' : isUnlocked ? '#ff4444' : '#666666';
+            const textColor = enabled ? '#00ff00' : isUnlocked ? '#ff8888' : '#666666';
+            
+            this.ctx.fillStyle = bgColor;
+            this.ctx.fillRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+            this.ctx.strokeStyle = borderColor;
+            this.ctx.strokeRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
+            
+            // Module name
+            this.ctx.fillStyle = textColor;
+            this.ctx.font = '16px Arial';
+            this.ctx.textAlign = 'left';
+            this.ctx.textBaseline = 'top';
+            this.ctx.fillText(moduleType, btn.rect.x + 10, btn.rect.y + 10);
+            
+            // Cost information
+            if (cost) {
+                this.ctx.font = '12px Arial';
+                let costY = btn.rect.y + 35;
+                cost.forEach((amount, resourceType) => {
+                    const costText = `${resourceType}: ${amount}`;
+                    this.ctx.fillText(costText, btn.rect.x + 10, costY);
+                    costY += 15;
+                });
+            }
+            
+            // Status text
+            if (!isUnlocked) {
+                this.ctx.fillStyle = '#ff8888';
+                this.ctx.font = '12px Arial';
+                this.ctx.fillText('(Requires Research)', btn.rect.x + 10, btn.rect.y + btn.rect.height - 15);
+            } else if (!canAfford) {
+                this.ctx.fillStyle = '#ff8888';
+                this.ctx.font = '12px Arial';
+                this.ctx.fillText('(Insufficient Resources)', btn.rect.x + 10, btn.rect.y + btn.rect.height - 15);
+            }
+        });
+    }
+
+    private showBuildCategory(category: BuildCategory) {
+        this.buildCategory = category;
+        this.overlayState = OverlayState.BuildList;
+    }
+
+    private selectModuleFromCategory(moduleType: ModuleType) {
+        this.overlayState = OverlayState.None;
+        this.placingMode = true;
+        this.showQuickButtons = false; // Hide quick buttons during placement
+        this.onSelectToPlace(moduleType);
+    }
+
+    private getBuildingsForCategory(category: BuildCategory): ModuleType[] {
+        switch (category) {
+            case BuildCategory.Harvesting:
+                return [ModuleType.MiningRig];
+            case BuildCategory.Habitation:
+                return [ModuleType.Habitation, ModuleType.Greenhouse, ModuleType.ScienceLab];
+            case BuildCategory.Power:
+                return [ModuleType.SolarArray];
+            default:
+                return [];
         }
     }
 
-    private clipText(text: string, maxWidth: number): string {
-        if (this.ctx.measureText(text).width <= maxWidth) return text;
-        let ell = '…';
-        let low = 0, high = text.length;
-        while (low < high) {
-            const mid = Math.ceil((low + high) / 2);
-            const candidate = text.slice(0, mid) + ell;
-            if (this.ctx.measureText(candidate).width <= maxWidth) low = mid; else high = mid - 1;
+    private getCategoryName(category: BuildCategory): string {
+        switch (category) {
+            case BuildCategory.Harvesting:
+                return 'Harvesting Buildings';
+            case BuildCategory.Habitation:
+                return 'Habitation & Life Support';
+            case BuildCategory.Power:
+                return 'Power Generation';
+            default:
+                return 'Buildings';
         }
-        return text.slice(0, low) + ell;
     }
 
-    private formatCost(cost: Map<ResourceType, number>): string {
-        const parts: string[] = [];
-        cost.forEach((amt, res) => parts.push(`${amt} ${res}`));
-        return `Cost: ${parts.join(', ')}`;
+    public setPlacingMode(placing: boolean) {
+        this.placingMode = placing;
+    }
+
+    public isPlacingMode(): boolean {
+        return this.placingMode;
+    }
+
+    public hideQuickButtons() {
+        this.showQuickButtons = false;
     }
 }
