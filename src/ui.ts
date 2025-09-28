@@ -1,4 +1,4 @@
-import { Colony, ResourceType, ModuleType } from './colony';
+import { Colony, ResourceType, ModuleType, TECHS, TechId } from './colony';
 
 interface Button {
     rect: { x: number, y: number, width: number, height: number };
@@ -10,7 +10,8 @@ interface Button {
 enum OverlayState {
     None,
     MainOverlay,
-    BuildList
+    BuildList,
+    Research
 }
 
 enum BuildCategory {
@@ -202,14 +203,14 @@ export class UI {
             text: 'R&D',
             onClick: () => { 
                 this.showQuickButtons = false;
-                /* No functionality yet */ 
+                this.showResearchOverlay();
             },
-            enabled: false
+            enabled: true
         };
         
         this.buttons.push(buildBtn, rdBtn);
         this.drawSimpleButton(buildBtn, '#00ff00');
-        this.drawSimpleButton(rdBtn, '#666666');
+        this.drawSimpleButton(rdBtn, '#9933ff');
     }
 
     private drawCancelButton() {
@@ -261,6 +262,10 @@ export class UI {
         this.overlayState = OverlayState.MainOverlay;
     }
 
+    private showResearchOverlay() {
+        this.overlayState = OverlayState.Research;
+    }
+
     private cancelPlacement() {
         this.placingMode = false;
         this.overlayState = this.buildCategory !== null ? OverlayState.BuildList : OverlayState.MainOverlay;
@@ -277,10 +282,13 @@ export class UI {
         let overlayWidth = 400;
         let overlayHeight = 300;
         
-        // Make overlay larger for building list
+        // Make overlay larger for building list and research
         if (this.overlayState === OverlayState.BuildList) {
             overlayWidth = 500;
             overlayHeight = 400;
+        } else if (this.overlayState === OverlayState.Research) {
+            overlayWidth = 700;
+            overlayHeight = 500;
         }
         
         const overlayX = (canvas.width - overlayWidth) / 2;
@@ -302,7 +310,10 @@ export class UI {
                 height: 30 
             },
             text: 'X',
-            onClick: () => { this.overlayState = OverlayState.None; },
+            onClick: () => { 
+                this.overlayState = OverlayState.None; 
+                this.showQuickButtons = false; // Hide quick buttons when overlay closes
+            },
             enabled: true
         };
         this.buttons.push(closeBtn);
@@ -312,6 +323,8 @@ export class UI {
             this.drawCategorySelection(overlayX, overlayY, overlayWidth, overlayHeight);
         } else if (this.overlayState === OverlayState.BuildList && this.buildCategory !== null) {
             this.drawBuildingList(overlayX, overlayY, overlayWidth, overlayHeight, this.buildCategory);
+        } else if (this.overlayState === OverlayState.Research) {
+            this.drawResearchTree(overlayX, overlayY, overlayWidth, overlayHeight);
         }
 
         this.ctx.restore();
@@ -360,6 +373,7 @@ export class UI {
             this.ctx.strokeStyle = cat.color;
             this.ctx.strokeRect(btn.rect.x, btn.rect.y, btn.rect.width, btn.rect.height);
             
+            // Draw category text
             this.ctx.fillStyle = cat.color;
             this.ctx.font = '14px Arial';
             this.ctx.textAlign = 'center';
@@ -375,6 +389,8 @@ export class UI {
                 );
             });
         });
+        
+
     }
 
     private drawBuildingList(overlayX: number, overlayY: number, overlayWidth: number, overlayHeight: number, category: BuildCategory) {
@@ -518,4 +534,142 @@ export class UI {
     public hideQuickButtons() {
         this.showQuickButtons = false;
     }
+
+    private drawResearchTree(overlayX: number, overlayY: number, overlayWidth: number, overlayHeight: number) {
+        // Title
+        this.ctx.fillStyle = '#9933ff';
+        this.ctx.font = '24px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'top';
+        this.ctx.fillText('Research & Development', overlayX + overlayWidth / 2, overlayY + 20);
+
+        // Current science display
+        const science = Math.floor(this.colony.resources.get(ResourceType.Science) || 0);
+        this.ctx.fillStyle = '#66ccff';
+        this.ctx.font = '16px Arial';
+        this.ctx.fillText(`Available Science: ${science}`, overlayX + overlayWidth / 2, overlayY + 50);
+
+        // Research tree grid
+        const startY = overlayY + 90;
+        const techWidth = 120;
+        const techHeight = 60;
+        const techSpacing = 140;
+        const tierSpacing = 80;
+
+        // Group techs by tier
+        const techsByTier: { [tier: number]: TechId[] } = {};
+        Object.entries(TECHS).forEach(([id, spec]) => {
+            if (!techsByTier[spec.tier]) {
+                techsByTier[spec.tier] = [];
+            }
+            techsByTier[spec.tier].push(id as TechId);
+        });
+
+        // Draw tier by tier
+        let currentY = startY;
+        for (let tier = 1; tier <= 5; tier++) {
+            if (!techsByTier[tier]) continue;
+
+            // Tier label
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = '14px Arial';
+            this.ctx.textAlign = 'left';
+            this.ctx.fillText(`Tier ${tier}`, overlayX + 20, currentY + 15);
+
+            const techs = techsByTier[tier];
+            const rowStartX = overlayX + 80;
+            
+            techs.forEach((techId, index) => {
+                const spec = TECHS[techId];
+                const techX = rowStartX + (index % 4) * techSpacing;
+                const techY = currentY + Math.floor(index / 4) * (techHeight + 10);
+
+                // Skip if would go outside overlay
+                if (techY + techHeight > overlayY + overlayHeight - 20) return;
+
+                const isResearched = this.colony.isResearched(techId);
+                const canResearch = this.colony.canResearchTech(techId);
+                const hasPrereqs = !spec.prerequisites || spec.prerequisites.every(p => this.colony.isResearched(p));
+
+                // Tech button
+                const btn: Button = {
+                    rect: { x: techX, y: techY, width: techWidth, height: techHeight },
+                    text: techId,
+                    onClick: () => {
+                        if (canResearch) {
+                            this.colony.unlockTech(techId);
+                        }
+                    },
+                    enabled: canResearch
+                };
+                this.buttons.push(btn);
+
+                // Color based on status
+                let bgColor = '#333333';
+                let borderColor = '#666666';
+                let textColor = '#888888';
+
+                if (isResearched) {
+                    bgColor = '#003300';
+                    borderColor = '#00ff00';
+                    textColor = '#00ff00';
+                } else if (canResearch) {
+                    bgColor = '#330033';
+                    borderColor = '#9933ff';
+                    textColor = '#9933ff';
+                } else if (hasPrereqs) {
+                    bgColor = '#331100';
+                    borderColor = '#ff6600';
+                    textColor = '#ff6600';
+                }
+
+                // Draw tech box
+                this.ctx.fillStyle = bgColor;
+                this.ctx.fillRect(techX, techY, techWidth, techHeight);
+                this.ctx.strokeStyle = borderColor;
+                this.ctx.strokeRect(techX, techY, techWidth, techHeight);
+
+                // Tech name and cost
+                this.ctx.fillStyle = textColor;
+                this.ctx.font = '10px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'top';
+                
+                // Wrap text if too long
+                const words = techId.split(' ');
+                let line = '';
+                let y = techY + 5;
+                words.forEach(word => {
+                    if (line.length + word.length > 15) {
+                        this.ctx.fillText(line, techX + techWidth/2, y);
+                        line = word + ' ';
+                        y += 12;
+                    } else {
+                        line += word + ' ';
+                    }
+                });
+                if (line.trim()) {
+                    this.ctx.fillText(line.trim(), techX + techWidth/2, y);
+                }
+
+                // Cost
+                this.ctx.font = '9px Arial';
+                this.ctx.fillStyle = '#66ccff';
+                this.ctx.fillText(`${spec.cost} Science`, techX + techWidth/2, techY + techHeight - 15);
+
+                // Prerequisites indicator
+                if (spec.prerequisites && !isResearched) {
+                    const missingPrereqs = spec.prerequisites.filter(p => !this.colony.isResearched(p));
+                    if (missingPrereqs.length > 0) {
+                        this.ctx.fillStyle = '#ff4444';
+                        this.ctx.font = '8px Arial';
+                        this.ctx.fillText(`Needs: ${missingPrereqs.length} prereq`, techX + techWidth/2, techY + techHeight - 5);
+                    }
+                }
+            });
+
+            currentY += Math.ceil(techs.length / 4) * (techHeight + 10) + tierSpacing;
+        }
+    }
+
 }

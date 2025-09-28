@@ -1,4 +1,36 @@
-export type Tile = '.' | 'R' | ' ' | 'C' | 'H' | 'G' | 'L' | 'S' | 'M' | 'A' | 'O';
+export type Tile =
+  | '.'
+  | 'C'
+  | 'H'
+  | 'G'
+  | 'L'
+  | 'A'
+  | 'O'
+  | 'M'
+  | '⛰'   // Resource deposit
+  | 'S'   // Solar
+  | 'Q'   // Quantum lab
+  | 'P'   // Plasma extractor
+  | 'D'   // Shield generator
+  | 'T'   // Teleport hub
+  | 'N'   // Nano factory
+  | '◎'   // Arc Reactor
+  | '✪'   // Command Center
+  | '⌂'   // Habitation
+  | '♣'   // Greenhouse
+  | 'Δ'   // Science Lab
+  | '☼'   // Solar Array
+  | '⛏'   // Mining Rig
+  | '⌬'   // Comms Relay
+  | '⚙'   // Orbital Assembly
+  | '⚡'   // Fusion Reactor
+  | '∞'   // Quantum Lab
+  | '◉'   // Plasma Extractor
+  | '⛨'   // Shield Generator
+  | '✦'   // Teleport Hub
+  | '⋄'   // Nano Factory
+  | ' ';
+
 
 export class Grid {
     width: number;
@@ -27,20 +59,41 @@ export class Grid {
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
                 const r = rand();
-                // 8% chance of a resource deposit
-                const hasRes = r < 0.08;
+                // 2% chance of a resource deposit (reduced from 8% for open world)
+                const hasRes = r < 0.02;
                 this.resources[y][x] = hasRes;
-                this.tiles[y][x] = hasRes ? 'R' : '.';
+                this.tiles[y][x] = hasRes ? '⛰' : '.';
             }
         }
     }
 
     // Return grid coordinates from a mouse position; undefined if outside
-    hitTest(px: number, py: number): { x: number, y: number } | undefined {
-        const gx = Math.floor((px - this.originX) / this.cellW);
-        const gy = Math.floor((py - this.originY) / this.cellH);
-        if (gx >= 0 && gy >= 0 && gx < this.width && gy < this.height) {
-            return { x: gx, y: gy };
+    hitTest(px: number, py: number, cameraX?: number, cameraY?: number, canvasWidth?: number, canvasHeight?: number): { x: number, y: number } | undefined {
+        const localX = Math.floor((px - this.originX) / this.cellW);
+        const localY = Math.floor((py - this.originY) / this.cellH);
+        
+        if (cameraX !== undefined && cameraY !== undefined && canvasWidth !== undefined && canvasHeight !== undefined) {
+            // Calculate viewport dimensions using actual canvas size (same as draw method)
+            const availableW = canvasWidth - this.originX - 20;
+            const availableH = canvasHeight - this.originY - 20;
+            const viewportTilesW = Math.floor(availableW / this.cellW);
+            const viewportTilesH = Math.floor(availableH / this.cellH);
+            
+            // Convert local screen coordinates to world coordinates with wrapping
+            const startX = Math.floor(cameraX - viewportTilesW / 2);
+            const startY = Math.floor(cameraY - viewportTilesH / 2);
+            
+            // Check if click is within viewport
+            if (localX >= 0 && localY >= 0 && localX <= viewportTilesW && localY <= viewportTilesH) {
+                const worldX = ((startX + localX) % this.width + this.width) % this.width;
+                const worldY = ((startY + localY) % this.height + this.height) % this.height;
+                return { x: worldX, y: worldY };
+            }
+        } else {
+            // Legacy behavior for non-camera mode
+            if (localX >= 0 && localY >= 0 && localX < this.width && localY < this.height) {
+                return { x: localX, y: localY };
+            }
         }
         return undefined;
     }
@@ -49,9 +102,22 @@ export class Grid {
 
     set(x: number, y: number, t: Tile) { this.tiles[y][x] = t; }
 
+    // World wrapping get methods
+    getWrapped(x: number, y: number): Tile {
+        const wrappedX = ((x % this.width) + this.width) % this.width;
+        const wrappedY = ((y % this.height) + this.height) % this.height;
+        return this.tiles[wrappedY][wrappedX];
+    }
+
+    getResourceWrapped(x: number, y: number): boolean {
+        const wrappedX = ((x % this.width) + this.width) % this.width;
+        const wrappedY = ((y % this.height) + this.height) % this.height;
+        return this.resources[wrappedY][wrappedX];
+    }
+
     isEmpty(x: number, y: number): boolean {
         const t = this.get(x, y);
-        return t === '.' || t === 'R';
+        return t === '.' || t === '⛰';
     }
 
     // Convert grid coordinates to pixel position
@@ -59,42 +125,113 @@ export class Grid {
         return { px: this.originX + x * this.cellW, py: this.originY + y * this.cellH };
     }
 
-    draw(ctx: CanvasRenderingContext2D) {
+    draw(ctx: CanvasRenderingContext2D, cameraX?: number, cameraY?: number) {
         ctx.save();
-        const fontPx = Math.max(14, Math.floor(this.cellH * 0.9));
+        // Scale font size with tile size, but keep it readable
+        const fontPx = Math.max(8, Math.min(32, Math.floor(this.cellH * 0.8)));
         ctx.font = `${fontPx}px Consolas, 'Courier New', monospace`;
         ctx.textBaseline = 'top';
 
-        // Frame
+        // Calculate viewport dimensions
+        const availableW = ctx.canvas.width - this.originX - 20;
+        const availableH = ctx.canvas.height - this.originY - 20;
+        const viewportTilesW = Math.floor(availableW / this.cellW);
+        const viewportTilesH = Math.floor(availableH / this.cellH);
+
+        // Fixed frame around visible area - independent of camera/tiles for stability
         ctx.strokeStyle = '#00ff00';
-        ctx.strokeRect(this.originX - 8, this.originY - 8, this.width * this.cellW + 16, this.height * this.cellH + 16);
+        const frameX = this.originX - 8;
+        const frameY = this.originY - 8;
+        const frameW = viewportTilesW * this.cellW;
+        const frameH = viewportTilesH * this.cellH;
+        ctx.strokeRect(frameX, frameY, frameW + 16, frameH + 16);
 
-        for (let y = 0; y < this.height; y++) {
-            for (let x = 0; x < this.width; x++) {
-                const t = this.tiles[y][x];
-                const px = this.originX + x * this.cellW;
-                const py = this.originY + y * this.cellH;
-                let color = '#00ff00';
-                switch (t) {
-                    case '.': color = '#2a2a2a'; break;        // ground
-                    case 'R': color = '#1b3b1b'; break;        // resource deposit backdrop
-                    case 'C': color = '#00ff00'; break;        // command center
-                    case 'H': color = '#66ff66'; break;        // habitation
-                    case 'G': color = '#99ff99'; break;        // greenhouse
-                    case 'L': color = '#66ccff'; break;        // science lab
-                    case 'S': color = '#ffff66'; break;        // solar
-                    case 'M': color = '#ffcc66'; break;        // mining rig
-                    case 'A': color = '#ff66cc'; break;        // comms relay
-                    case 'O': color = '#cc66ff'; break;        // orbital assembly
-                    default: color = '#00ff00';
+        if (cameraX !== undefined && cameraY !== undefined) {
+            // Set clipping region to prevent tiles from drawing outside frame
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(frameX + 8, frameY + 8, frameW, frameH);
+            ctx.clip();
+            
+            // World wrapping viewport with decimal precision for smooth zoom
+            const startX = Math.floor(cameraX - viewportTilesW / 2);
+            const startY = Math.floor(cameraY - viewportTilesH / 2);
+            
+            // Calculate sub-tile camera offset for smooth positioning
+            const subTileOffsetX = (cameraX - Math.floor(cameraX)) * this.cellW;
+            const subTileOffsetY = (cameraY - Math.floor(cameraY)) * this.cellH;
+            
+            for (let screenY = 0; screenY <= viewportTilesH; screenY++) {
+                for (let screenX = 0; screenX <= viewportTilesW; screenX++) {
+                    // World coordinates with wrapping
+                    const worldX = ((startX + screenX) % this.width + this.width) % this.width;
+                    const worldY = ((startY + screenY) % this.height + this.height) % this.height;
+                    
+                    const t = this.tiles[worldY][worldX];
+                    
+                    // Screen position with sub-tile offset for smooth camera movement
+                    const px = this.originX + screenX * this.cellW - subTileOffsetX;
+                    const py = this.originY + screenY * this.cellH - subTileOffsetY;
+                    
+                    let color = '#00ff00';
+                    switch (t) {
+                        case '.': color = '#2a2a2a'; break;        // ground
+                        case '⛰': color = '#1b3b1b'; break;        // resource deposit backdrop
+                        case 'C': color = '#00ff00'; break;        // command center
+                        case 'H': color = '#66ff66'; break;        // habitation
+                        case 'G': color = '#99ff99'; break;        // greenhouse
+                        case 'L': color = '#66ccff'; break;        // science lab
+                        case 'S': color = '#ffff66'; break;        // solar
+                        case 'M': color = '#ffcc66'; break;        // mining rig
+                        case 'A': color = '#ff66cc'; break;        // comms relay
+                        case 'O': color = '#cc66ff'; break;        // orbital assembly
+                        // Advanced modules with distinctive colors
+                        case 'Q': color = '#9933ff'; break;        // quantum lab - purple
+                        case 'P': color = '#ff3399'; break;        // plasma extractor - magenta
+                        case 'D': color = '#33ffff'; break;        // shield generator - cyan
+                        case 'T': color = '#ff9933'; break;        // teleport hub - orange
+                        case 'N': color = '#99ff33'; break;        // nano factory - lime green
+                        default: color = '#00ff00';
+                    }
+                    // backdrop
+                    ctx.fillStyle = color === '#2a2a2a' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.4)';
+                    ctx.fillRect(px, py, this.cellW, this.cellH);
+
+                    // glyph color
+                    ctx.fillStyle = color;
+                    ctx.fillText(t, px, py);
                 }
-                // backdrop
-                ctx.fillStyle = color === '#2a2a2a' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.4)';
-                ctx.fillRect(px, py, this.cellW, this.cellH);
-
-                // glyph color
-                ctx.fillStyle = color;
-                ctx.fillText(t, px, py);
+            }
+            
+            // Restore clipping
+            ctx.restore();
+        } else {
+            // Legacy non-camera mode
+            for (let y = 0; y < this.height; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    const t = this.tiles[y][x];
+                    const px = this.originX + x * this.cellW;
+                    const py = this.originY + y * this.cellH;
+                    
+                    let color = '#00ff00';
+                    switch (t) {
+                        case '.': color = '#2a2a2a'; break;
+                        case '⛰': color = '#1b3b1b'; break;
+                        case 'C': color = '#00ff00'; break;
+                        case 'H': color = '#66ff66'; break;
+                        case 'G': color = '#99ff99'; break;
+                        case 'L': color = '#66ccff'; break;
+                        case 'S': color = '#ffff66'; break;
+                        case 'M': color = '#ffcc66'; break;
+                        case 'A': color = '#ff66cc'; break;
+                        case 'O': color = '#cc66ff'; break;
+                        default: color = '#00ff00';
+                    }
+                    ctx.fillStyle = color === '#2a2a2a' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.4)';
+                    ctx.fillRect(px, py, this.cellW, this.cellH);
+                    ctx.fillStyle = color;
+                    ctx.fillText(t, px, py);
+                }
             }
         }
         ctx.restore();

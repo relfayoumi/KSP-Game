@@ -1,3 +1,5 @@
+import { Colony, ResourceType, TECHS, TechId } from './colony';
+
 export enum GameState {
     MainMenu = 'MainMenu',
     Settings = 'Settings',
@@ -22,6 +24,7 @@ export class MenuSystem {
     private currentState: GameState = GameState.MainMenu;
     private buttons: MenuButton[] = [];
     private onStateChange: (state: GameState) => void;
+    private colony: Colony | null = null;
     
     // Settings
     private settings = {
@@ -30,10 +33,11 @@ export class MenuSystem {
         fullscreen: false
     };
 
-    constructor(canvas: HTMLCanvasElement, onStateChange: (state: GameState) => void) {
+    constructor(canvas: HTMLCanvasElement, onStateChange: (state: GameState) => void, colony?: Colony) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d')!;
         this.onStateChange = onStateChange;
+        this.colony = colony || null;
         
         // Handle clicks
         this.canvas.addEventListener('click', (e) => this.handleClick(e));
@@ -61,6 +65,10 @@ export class MenuSystem {
 
     getState(): GameState {
         return this.currentState;
+    }
+
+    setColony(colony: Colony) {
+        this.colony = colony;
     }
 
     private setupButtons() {
@@ -203,6 +211,8 @@ export class MenuSystem {
                     }
                 ];
                 break;
+
+
         }
         console.log('Setup', this.buttons.length, 'buttons for state:', this.currentState);
     }
@@ -284,6 +294,9 @@ export class MenuSystem {
             this.drawSettingsContent();
         }
 
+        // Draw research tree if in research menu
+
+
         // Draw buttons
         this.drawButtons();
 
@@ -319,6 +332,7 @@ export class MenuSystem {
             case GameState.Paused:
                 this.ctx.fillText('Game Paused', centerX, titleY);
                 break;
+
         }
         
 
@@ -395,4 +409,6 @@ export class MenuSystem {
     onResize() {
         this.setupButtons();
     }
+
+
 }
