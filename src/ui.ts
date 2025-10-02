@@ -531,8 +531,54 @@ export class UI {
         return this.placingMode;
     }
 
+    public isAnyOverlayOpen(): boolean {
+        return this.overlayState !== OverlayState.None;
+    }
+
     public hideQuickButtons() {
         this.showQuickButtons = false;
+    }
+
+    // Keyboard shortcut handlers
+    public handleEscapeKey(): boolean {
+        // Priority 1: Cancel building placement if active
+        if (this.placingMode) {
+            this.placingMode = false;
+            if (this.onCancelPlacement) {
+                this.onCancelPlacement();
+            }
+            return true; // Consumed
+        }
+        
+        // Priority 2: Close overlays in reverse order (most recent first)
+        if (this.overlayState === OverlayState.Research) {
+            // Close research overlay
+            this.overlayState = OverlayState.None;
+            return true; // Consumed
+        } else if (this.overlayState === OverlayState.BuildList) {
+            // Return to main overlay
+            this.overlayState = OverlayState.MainOverlay;
+            this.buildCategory = null;
+            return true; // Consumed
+        } else if (this.overlayState === OverlayState.MainOverlay) {
+            // Close main overlay
+            this.overlayState = OverlayState.None;
+            return true; // Consumed
+        }
+        
+        // Priority 3: Nothing to close, let game handle (open menu)
+        return false; // Not consumed, let game handle (open menu)
+    }
+
+    public handleBuildKey(): void {
+        // Behave as if user pressed main menu then build
+        this.overlayState = OverlayState.MainOverlay;
+        this.buildCategory = null;
+    }
+
+    public handleResearchKey(): void {
+        // Open research overlay directly
+        this.overlayState = OverlayState.Research;
     }
 
     private drawResearchTree(overlayX: number, overlayY: number, overlayWidth: number, overlayHeight: number) {
