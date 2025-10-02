@@ -437,6 +437,9 @@ export class Game {
         
         // mining requires resource tile (with wrapping)
         if (placing === ModuleType.MiningRig && !this.grid.getResourceWrapped(x, y)) return false;
+        
+        // only mining rigs can be placed on resource tiles
+        if (placing !== ModuleType.MiningRig && this.grid.getResourceWrapped(x, y)) return false;
         // adjacency rules: all modules except SolarArray and MiningRig must be adjacent to a connector
         const requiresAdjacency = placing !== ModuleType.SolarArray && placing !== ModuleType.MiningRig;
         if (!requiresAdjacency) return true;
