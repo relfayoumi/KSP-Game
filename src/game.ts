@@ -84,7 +84,7 @@ export class Game {
         this.resizeCanvas();
         
         // Initialize menu system after canvas is properly sized
-        this.menuSystem = new MenuSystem(canvas, (state) => this.onMenuStateChange(state), this.colony);
+        this.menuSystem = new MenuSystem(canvas, (state) => this.onMenuStateChange(state), this.colony, () => this.shouldUIHandleEscape());
         
         // Ensure we start in main menu state
         this.menuSystem.setState(GameState.MainMenu);
@@ -109,6 +109,35 @@ export class Game {
         // Fixed tile size
         this.grid.cellW = 24;
         this.grid.cellH = 24;
+    }
+
+    private shouldUIHandleEscape(): boolean {
+        // Check if UI has overlays open or is in placing mode
+        return this.ui.isPlacingMode() || this.ui.isAnyOverlayOpen();
+    }
+
+    private handleKeyboardShortcuts() {
+        // Handle ESC key
+        if (this.keys['escape']) {
+            this.keys['escape'] = false; // Consume key
+            const consumed = this.ui.handleEscapeKey();
+            if (!consumed) {
+                // No overlay to close, open/close in-game menu
+                this.openInGameMenu();
+            }
+        }
+        
+        // Handle E key for build menu
+        if (this.keys['e']) {
+            this.keys['e'] = false; // Consume key
+            this.ui.handleBuildKey();
+        }
+        
+        // Handle R key for research menu
+        if (this.keys['r']) {
+            this.keys['r'] = false; // Consume key
+            this.ui.handleResearchKey();
+        }
     }
 
     private updateAnimations(dt: number) {
@@ -408,6 +437,9 @@ export class Game {
         
         // mining requires resource tile (with wrapping)
         if (placing === ModuleType.MiningRig && !this.grid.getResourceWrapped(x, y)) return false;
+        
+        // only mining rigs can be placed on resource tiles
+        if (placing !== ModuleType.MiningRig && this.grid.getResourceWrapped(x, y)) return false;
         // adjacency rules: all modules except SolarArray and MiningRig must be adjacent to a connector
         const requiresAdjacency = placing !== ModuleType.SolarArray && placing !== ModuleType.MiningRig;
         if (!requiresAdjacency) return true;
@@ -431,6 +463,9 @@ export class Game {
         
         // Handle movement cooldown
         this.moveCooldown -= dt;
+        
+        // Handle UI keyboard shortcuts first
+        this.handleKeyboardShortcuts();
         
         const wantLeft = this.keys['arrowleft'] || this.keys['a'];
         const wantRight = this.keys['arrowright'] || this.keys['d'];
@@ -568,7 +603,7 @@ export class Game {
         this.ctx.font = '14px Consolas, monospace';
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'alphabetic';
-        this.ctx.fillText('Move: WASD / Arrow Keys | Place: Click a Place button, then click a grid tile (R for Mining).', 370, this.canvas.height - 20);
+        this.ctx.fillText('Move: WASD/Arrows | Build: E | Research: R | Close/Menu: ESC | Place: Click button then grid tile', 370, this.canvas.height - 20);
         this.ctx.restore();
     }
 

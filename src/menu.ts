@@ -25,6 +25,7 @@ export class MenuSystem {
     private buttons: MenuButton[] = [];
     private onStateChange: (state: GameState) => void;
     private colony: Colony | null = null;
+    private shouldUIHandleEscape?: () => boolean;
     
     // Settings
     private settings = {
@@ -33,11 +34,12 @@ export class MenuSystem {
         fullscreen: false
     };
 
-    constructor(canvas: HTMLCanvasElement, onStateChange: (state: GameState) => void, colony?: Colony) {
+    constructor(canvas: HTMLCanvasElement, onStateChange: (state: GameState) => void, colony?: Colony, shouldUIHandleEscape?: () => boolean) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d')!;
         this.onStateChange = onStateChange;
         this.colony = colony || null;
+        this.shouldUIHandleEscape = shouldUIHandleEscape;
         
         // Handle clicks
         this.canvas.addEventListener('click', (e) => this.handleClick(e));
@@ -45,6 +47,11 @@ export class MenuSystem {
         // Handle ESC key for pause menu
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                // Check if UI should handle ESC first (for overlays, building placement, etc.)
+                if (this.shouldUIHandleEscape && this.shouldUIHandleEscape()) {
+                    return; // Let UI handle it
+                }
+                
                 if (this.currentState === GameState.Playing) {
                     this.setState(GameState.Paused);
                 } else if (this.currentState === GameState.Paused) {
