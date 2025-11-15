@@ -286,12 +286,19 @@ export class MenuSystem {
         }
 
         // Clear canvas with semi-transparent overlay if paused
+        this.ctx.save();
         if (this.currentState === GameState.Paused) {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         } else {
-            this.ctx.fillStyle = '#0a0a1a';
+            // Main menu gradient
+            const g = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+            g.addColorStop(0, '#04112a');
+            g.addColorStop(1, '#0b2a1e');
+            this.ctx.fillStyle = g;
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         }
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.restore();
 
         // Draw title
         this.drawTitle();

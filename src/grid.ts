@@ -125,7 +125,7 @@ export class Grid {
         return { px: this.originX + x * this.cellW, py: this.originY + y * this.cellH };
     }
 
-    draw(ctx: CanvasRenderingContext2D, cameraX?: number, cameraY?: number) {
+    draw(ctx: CanvasRenderingContext2D, cameraX?: number, cameraY?: number, playerX?: number, playerY?: number, viewRange?: number) {
         ctx.save();
         // Scale font size with tile size, but keep it readable
         const fontPx = Math.max(8, Math.min(32, Math.floor(this.cellH * 0.8)));
@@ -139,7 +139,8 @@ export class Grid {
         const viewportTilesH = Math.floor(availableH / this.cellH);
 
         // Fixed frame around visible area - independent of camera/tiles for stability
-        ctx.strokeStyle = '#00ff00';
+        // Frame around visible map area — use black so GUI region appears dark
+        ctx.strokeStyle = '#000000';
         const frameX = this.originX - 8;
         const frameY = this.originY - 8;
         const frameW = viewportTilesW * this.cellW;
@@ -167,6 +168,34 @@ export class Grid {
                     const worldX = ((startX + screenX) % this.width + this.width) % this.width;
                     const worldY = ((startY + screenY) % this.height + this.height) % this.height;
                     
+                    // Visibility check: Hide tiles outside player's view
+                    if (playerX !== undefined && playerY !== undefined && viewRange !== undefined) {
+                        // Calculate wrapped distance using Chebyshev (consistent with other game rules)
+                        // Use Euclidean distance for circular view
+                        const dx1 = Math.abs(worldX - playerX);
+                        const dx = Math.min(dx1, this.width - dx1);
+                        const dy1 = Math.abs(worldY - playerY);
+                        const dy = Math.min(dy1, this.height - dy1);
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        // Fading: fully visible up to fadeStart, then fade to 0 at viewRange
+                        const fadeWidth = Math.max(1, Math.floor(viewRange * 0.35));
+                        const fadeStart = Math.max(0, viewRange - fadeWidth);
+                        if (dist > viewRange) {
+                            // glyph fully invisible; we'll still draw backdrop
+                            (ctx as any)._tileAlpha = 0;
+                        } else {
+                            // Save alpha on tile via ctx.globalAlpha, applied later
+                            (ctx as any)._tileAlpha = 1;
+                                if (dist > fadeStart) {
+                                    const t = (dist - fadeStart) / (viewRange - fadeStart);
+                                    // Quadratic ease-out fade for smoother edge
+                                    const eased = 1 - Math.pow(Math.min(1, Math.max(0, t)), 2);
+                                    (ctx as any)._tileAlpha = eased;
+                                }
+                        }
+                    }
+                    
+
                     const t = this.tiles[worldY][worldX];
                     
                     // Screen position with sub-tile offset for smooth camera movement
@@ -193,13 +222,41 @@ export class Grid {
                         case 'N': color = '#99ff33'; break;        // nano factory - lime green
                         default: color = '#00ff00';
                     }
-                    // backdrop
-                    ctx.fillStyle = color === '#2a2a2a' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.4)';
+                    // Determine glyph alpha: tiles ('.') remain fully visible; specials fade
+                    let glyphAlpha = 1;
+                    if (t !== '.') {
+                        glyphAlpha = (ctx as any)._tileAlpha !== undefined ? (ctx as any)._tileAlpha : 1;
+                    }
+
+                    // Backdrop (always visible) - but if the tile is a special and it's faded out, draw ground backdrop
+                    const groundBackdrop = 'rgba(255,255,255,0.03)';
+                    const specialBackdrop = 'rgba(0,0,0,0.4)';
+                    const useGroundBackdrop = t !== '.' && glyphAlpha < 1;
+                    ctx.fillStyle = useGroundBackdrop ? groundBackdrop : (color === '#2a2a2a' ? groundBackdrop : specialBackdrop);
                     ctx.fillRect(px, py, this.cellW, this.cellH);
 
-                    // glyph color
-                    ctx.fillStyle = color;
-                    ctx.fillText(t, px, py);
+                    // glyphAlpha already set above
+
+                    if (glyphAlpha > 0) {
+                        ctx.save();
+                        ctx.globalAlpha = glyphAlpha;
+                        // glyph color
+                        ctx.fillStyle = color;
+                        ctx.fillText(t, px, py);
+                        ctx.restore();
+                    }
+                    else {
+                        // If a special is fully faded, draw '.' so it doesn't appear as a blank tile
+                        if (t !== '.') {
+                            ctx.save();
+                            ctx.globalAlpha = 1;
+                            ctx.fillStyle = '#2a2a2a';
+                            ctx.fillText('.', px, py);
+                            ctx.restore();
+                        }
+                    }
+                    // Clear tile alpha so it doesn't affect other drawings
+                    if ((ctx as any)._tileAlpha !== undefined) delete (ctx as any)._tileAlpha;
                 }
             }
             

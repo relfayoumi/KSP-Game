@@ -35,6 +35,7 @@ export class Game {
     // Track module placements to infer active mining rigs
     private placements: { x: number, y: number, type: ModuleType }[] = [];
     private isPaused: boolean = false;
+    private viewRange: number = 6; // Tiles visible around the player
 
     // Player avatar - discrete tile position
     private px: number; // grid X
@@ -57,12 +58,16 @@ export class Game {
     private constructionSites: ConstructionSite[] = [];
     private particles: Particle[] = [];
     private animationTime: number = 0;
+    // Day/night cycle state
+    private elapsedHours: number = 12; // float hours since start - start at noon
+    private daySpeed: number = 0.15; // hours per real second
+    private dayPaused: boolean = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d')!;
         this.colony = new Colony();
-    this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt), () => this.openInGameMenu(), () => this.cancelPlacement());
+        this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt), () => this.openInGameMenu(), () => this.cancelPlacement(), () => this.getTimeData(), (p) => this.setDayPaused(p));
     // Open world: Much larger map for exploration
     this.grid = new Grid(200, 150);
         
@@ -169,6 +174,37 @@ export class Game {
         // Generate new particles for active modules
         this.generateModuleParticles();
     }
+
+    private isTileInPlayerView(tx: number, ty: number, range = 6) {
+        // Use world-wrapping logic and Chebyshev distance like other game systems
+        const dx1 = Math.abs(tx - this.px);
+        const dx2 = this.grid.width - dx1;
+        const dx = Math.min(dx1, dx2);
+
+        const dy1 = Math.abs(ty - this.py);
+        const dy2 = this.grid.height - dy1;
+        const dy = Math.min(dy1, dy2);
+
+        return Math.max(dx, dy) <= range;
+    }
+
+    private computeTileAlpha(tx: number, ty: number, range = this.viewRange) {
+        // Euclidean distance with world wrapping
+        const dx1 = Math.abs(tx - this.px);
+        const dx = Math.min(dx1, this.grid.width - dx1);
+        const dy1 = Math.abs(ty - this.py);
+        const dy = Math.min(dy1, this.grid.height - dy1);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > range) return 0;
+        const fadeWidth = Math.max(1, Math.floor(range * 0.35));
+        const fadeStart = Math.max(0, range - fadeWidth);
+        if (dist <= fadeStart) return 1;
+        const t = (dist - fadeStart) / (range - fadeStart);
+        // Smooth easing: ease-out (quadratic) for a smoother fade curve
+        const eased = 1 - Math.pow(Math.min(1, Math.max(0, t)), 2);
+        return eased;
+    }
     
     private generateModuleParticles() {
         // Generate particles every few frames to avoid spam
@@ -258,7 +294,7 @@ export class Game {
     private resetGame() {
         // Reset colony
         this.colony = new Colony();
-        this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt), () => this.openInGameMenu(), () => this.cancelPlacement());
+        this.ui = new UI(this.ctx, this.colony, (mt) => this.beginPlacement(mt), () => this.openInGameMenu(), () => this.cancelPlacement(), () => this.getTimeData(), (p) => this.setDayPaused(p));
         
         // Reset grid
         this.grid = new Grid(200, 150);
@@ -680,6 +716,10 @@ export class Game {
                 const elapsed = this.animationTime - site.startTime;
                 const progress = Math.min(elapsed / site.duration, 1.0);
                 
+                // Fade based on distance from player
+                const siteAlpha = this.computeTileAlpha(site.x, site.y, this.viewRange);
+                if (siteAlpha <= 0) continue;
+
                 this.ctx.save();
                 
                 // Construction phases: ░ → ▒ → ▓ → final
@@ -699,7 +739,7 @@ export class Game {
                 const pulse = 0.5 + 0.5 * Math.sin(this.animationTime * 4);
                 alpha *= (0.7 + 0.3 * pulse);
                 
-                this.ctx.globalAlpha = alpha;
+                this.ctx.globalAlpha = alpha * siteAlpha;
                 this.ctx.fillStyle = '#ffaa00';
                 this.ctx.font = `${Math.floor(this.grid.cellH * 0.9)}px Consolas, 'Courier New', monospace`;
                 this.ctx.textAlign = 'left';
@@ -724,6 +764,8 @@ export class Game {
             const relativeY = particle.y - startY;
             
             if (relativeX >= -1 && relativeX <= viewportTilesW + 1 && relativeY >= -1 && relativeY <= viewportTilesH + 1) {
+                const particleAlpha = this.computeTileAlpha(Math.floor(particle.x), Math.floor(particle.y), this.viewRange);
+                if (particleAlpha <= 0) continue;
                 const screenX = this.grid.originX + relativeX * this.grid.cellW - subTileOffsetX;
                 const screenY = this.grid.originY + relativeY * this.grid.cellH - subTileOffsetY;
                 
@@ -731,7 +773,7 @@ export class Game {
                 const blink = 0.5 + 0.5 * Math.sin(this.animationTime * 8 + particle.x + particle.y);
                 const alpha = particle.alpha * (0.6 + 0.4 * blink);
                 
-                this.ctx.globalAlpha = alpha;
+                this.ctx.globalAlpha = alpha * particleAlpha;
                 this.ctx.fillStyle = particle.color;
                 this.ctx.font = `${Math.floor(this.grid.cellH * 0.6)}px Consolas, 'Courier New', monospace`;
                 this.ctx.textAlign = 'center';
@@ -769,14 +811,26 @@ export class Game {
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Always set background
-        this.ctx.fillStyle = '#0a0a1a';
+        // Update day/night clock (pausable)
+        if (!this.dayPaused) this.elapsedHours += dt * this.daySpeed;
+        // keep bounded
+        if (this.elapsedHours >= 24) this.elapsedHours = this.elapsedHours % 24;
+
+        // Make the GUI area around the map black; sky is drawn only inside map area
+        this.ctx.save();
+        this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.restore();
+
+        // Draw sky inside map area (day/night gradient)
+        this.drawSky();
 
         // Draw game content only when playing
         if (this.menuSystem.getState() === GameState.Playing) {
-            // Draw grid first (background)
-            this.grid.draw(this.ctx, this.cameraX, this.cameraY);
+            // GUI area already black; continue drawing the map
+
+            // Draw grid first (background) - circular fading view
+            this.grid.draw(this.ctx, this.cameraX, this.cameraY, this.px, this.py, this.viewRange);
             // Hover ghost for placement - always grid-aligned
             if (this.selectedToPlace && this.hover && !this.isPaused) {
                 const { x, y } = this.hover;
@@ -801,11 +855,14 @@ export class Game {
                 
                 // Only draw if within viewport bounds
                 if (relativeX >= 0 && relativeX < viewportTilesW && relativeY >= 0 && relativeY < viewportTilesH) {
-                    this.ctx.save();
+                    // Fade preview based on distance
+                    const previewAlpha = this.computeTileAlpha(x, y, this.viewRange);
+                    if (previewAlpha > 0) {
+                        this.ctx.save();
                     
                     // Pulsing semi-transparent preview with smooth animation
                     const pulse = 0.7 + 0.3 * Math.sin(this.animationTime * 4);
-                    const alpha = pulse * (ok ? 0.4 : 0.3);
+                    const alpha = pulse * (ok ? 0.4 : 0.3) * previewAlpha;
                     
                     this.ctx.fillStyle = ok ? `rgba(0,255,0,${alpha})` : `rgba(255,0,0,${alpha})`;
                     this.ctx.fillRect(screenX, screenY, this.grid.cellW, this.grid.cellH);
@@ -822,7 +879,8 @@ export class Game {
                     this.ctx.textAlign = 'left';
                     this.ctx.fillText(this.symbolFor(this.selectedToPlace), screenX, screenY);
                     
-                    this.ctx.restore();
+                        this.ctx.restore();
+                    }
                 }
             }
             this.drawConstructionSites();
@@ -830,6 +888,8 @@ export class Game {
             this.drawPlayer();
             this.drawHelp();
             this.drawOxygenBar();
+            // Apply night overlay for dimming visuals at night
+            this.drawNightOverlay();
             
             // Draw UI last so overlays appear on top
             this.ctx.save();
@@ -844,5 +904,82 @@ export class Game {
 
         // Loop
         requestAnimationFrame(() => this.gameLoop());
+    }
+
+    private getTimeData() {
+        const hours = this.elapsedHours % 24;
+        const day = Math.floor(this.elapsedHours / 24) + 1;
+        const minutes = Math.floor((hours % 1) * 60);
+        const normalized = hours / 24;
+        return { hours, minutes, day, normalized, paused: this.dayPaused } as const;
+    }
+
+    private setDayPaused(p: boolean) {
+        this.dayPaused = p;
+    }
+
+    private drawSky() {
+        // Compute day brightness from elapsedHours
+        const hours = (this.elapsedHours % 24 + 24) % 24; // 0..24
+        const angle = (hours / 24) * Math.PI * 2; // 0..2pi
+        // brightness peaks at midday
+        const brightness = Math.max(0, Math.sin(angle - Math.PI / 2));
+
+        // Sky gradient colors for top and bottom
+        const dayTop = '#7ec0ee';
+        const dayBottom = '#dff7ff';
+        const nightTop = '#020215';
+        const nightBottom = '#05051a';
+
+        const mix = (a: string, b: string, t: number) => {
+            // simple hex color lerp
+            const pa = parseInt(a.slice(1), 16);
+            const pb = parseInt(b.slice(1), 16);
+            const ra = (pa >> 16) & 0xff, ga = (pa >> 8) & 0xff, ba = pa & 0xff;
+            const rb = (pb >> 16) & 0xff, gb = (pb >> 8) & 0xff, bb = pb & 0xff;
+            const r = Math.round(ra + (rb - ra) * t);
+            const g = Math.round(ga + (gb - ga) * t);
+            const bl = Math.round(ba + (bb - ba) * t);
+            return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+        };
+
+        const top = mix(nightTop, dayTop, brightness);
+        const bottom = mix(nightBottom, dayBottom, brightness);
+
+        const g = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+        g.addColorStop(0, top);
+        g.addColorStop(1, bottom);
+        this.ctx.fillStyle = g;
+        // Restrict sky gradient to map area so GUI beyond it is not affected by day/night
+        const { viewportTilesW, viewportTilesH } = this.getViewportInfo();
+        const frameX = this.grid.originX - 8;
+        const frameY = this.grid.originY - 8;
+        const frameW = viewportTilesW * this.grid.cellW;
+        const frameH = viewportTilesH * this.grid.cellH;
+        this.ctx.fillRect(frameX + 8, frameY + 8, frameW, frameH);
+
+        // Top-down ASCII game: no sun/moon; day/night only via brightness/darkness and subtle sky tint
+    }
+
+    private drawNightOverlay() {
+        const hours = (this.elapsedHours % 24 + 24) % 24;
+        const angle = (hours / 24) * Math.PI * 2;
+        const brightness = Math.max(0, Math.sin(angle - Math.PI / 2));
+        const darkness = Math.max(0, 0.75 - brightness) * 1.25; // stronger overlay at night
+
+        if (darkness <= 0) return;
+
+        // Restrict overlay to the map frame only so GUI is unaffected
+        const { viewportTilesW, viewportTilesH } = this.getViewportInfo();
+        const frameX = this.grid.originX - 8;
+        const frameY = this.grid.originY - 8;
+        const frameW = viewportTilesW * this.grid.cellW;
+        const frameH = viewportTilesH * this.grid.cellH;
+
+        this.ctx.save();
+        // Draw overlay only inside the visible map area (exclude borders by using +8 offset)
+        this.ctx.fillStyle = `rgba(0, 0, 30, ${Math.min(0.85, darkness)})`;
+        this.ctx.fillRect(frameX + 8, frameY + 8, frameW, frameH);
+        this.ctx.restore();
     }
 }

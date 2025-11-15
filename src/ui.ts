@@ -27,17 +27,21 @@ export class UI {
     private onSelectToPlace: (type: ModuleType) => void;
     private onOpenMenu?: () => void;
     private onCancelPlacement?: () => void;
+    private getTimeData?: () => { hours: number, minutes: number, day: number, normalized: number, paused?: boolean };
+    private setDayPaused?: (p: boolean) => void;
     private overlayState: OverlayState = OverlayState.None;
     private buildCategory: BuildCategory | null = null;
     private placingMode: boolean = false;
     private showQuickButtons: boolean = false;
 
-    constructor(ctx: CanvasRenderingContext2D, colony: Colony, onSelectToPlace: (type: ModuleType) => void, onOpenMenu?: () => void, onCancelPlacement?: () => void) {
+    constructor(ctx: CanvasRenderingContext2D, colony: Colony, onSelectToPlace: (type: ModuleType) => void, onOpenMenu?: () => void, onCancelPlacement?: () => void, getTimeData?: () => { hours: number, minutes: number, day: number, normalized: number, paused?: boolean }, setDayPaused?: (p: boolean) => void) {
         this.ctx = ctx;
         this.colony = colony;
         this.onSelectToPlace = onSelectToPlace;
         this.onOpenMenu = onOpenMenu;
         this.onCancelPlacement = onCancelPlacement;
+        this.getTimeData = getTimeData;
+        this.setDayPaused = setDayPaused;
     }
 
     draw() {
@@ -60,15 +64,58 @@ export class UI {
     }
 
     private drawResourcePanel() {
-        // resources + kerbals + power net
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        this.ctx.fillRect(10, 10, 340, 150);
-        this.ctx.strokeStyle = '#00ff00';
-        this.ctx.strokeRect(10, 10, 340, 150);
+        // resources + kerbals + power net (stylish rounded panel)
+        const panelX = 10, panelY = 10, panelW = 360, panelH = 150;
+        this.ctx.save();
+        // subtle gradient and border for refinement
+        const g = this.ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+        g.addColorStop(0, 'rgba(10,10,10,0.7)');
+        g.addColorStop(1, 'rgba(20,20,20,0.4)');
+        // Ensure panel border is visible against dark background
+        const borderColor = '#ffffff';
+        this.drawRoundedRect(panelX, panelY, panelW, panelH, 10, g, '#33ff88');
 
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = '16px Arial';
-        this.ctx.fillText('Colony Status', 20, 30);
+        this.ctx.fillText('Colony Status', 20, 34);
+
+        // Time of day indicator (top-right of resource panel)
+        if (this.getTimeData) {
+            const td = this.getTimeData();
+            const timeBoxW = 160;
+            const timeBoxH = 36;
+            const timeX = panelX + panelW - timeBoxW - 12;
+            const timeY = panelY + 12;
+
+            this.ctx.save();
+            // Small dark rounded box
+            this.drawRoundedRect(timeX, timeY, timeBoxW, timeBoxH, 8, 'rgba(0,0,0,0.4)', '#66ccff');
+
+            const isDay = td.hours >= 6 && td.hours < 18;
+            const icon = isDay ? 'Day' : 'Night';
+            const timeText = `${String(Math.floor(td.hours)).padStart(2,'0')}:${String(td.minutes).padStart(2,'0')}`;
+
+            this.ctx.fillStyle = isDay ? '#ffd966' : '#cfe6ff';
+            this.ctx.font = '18px Arial';
+            this.ctx.textAlign = 'left';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText(`${icon} Day ${td.day}`, timeX + 10, timeY + timeBoxH / 4);
+
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = '13px Arial';
+            this.ctx.fillText(`${timeText}`, timeX + 10, timeY + timeBoxH * 0.72);
+            this.ctx.restore();
+
+            // Toggle button for pausing day/night (small button in top-left of panel)
+            const pauseBtn: Button = {
+                rect: { x: panelX + panelW - 44, y: panelY + panelH - 36, width: 34, height: 26 },
+                text: td.paused ? '▶' : '❚❚',
+                onClick: () => { if (this.setDayPaused) this.setDayPaused(!td.paused); },
+                enabled: true
+            };
+            this.buttons.push(pauseBtn);
+            this.drawSimpleButton(pauseBtn, '#66ccff');
+        }
 
         let y = 52;
         const print = (label: string, value: string | number) => {
@@ -88,11 +135,33 @@ export class UI {
     // (removed Mat Rate/sec by request)
     }
 
+    private drawRoundedRect(x: number, y: number, w: number, h: number, r: number, fillStyle: CanvasGradient | string, strokeStyle?: string) {
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.moveTo(x + r, y);
+        this.ctx.arcTo(x + w, y, x + w, y + h, r);
+        this.ctx.arcTo(x + w, y + h, x, y + h, r);
+        this.ctx.arcTo(x, y + h, x, y, r);
+        this.ctx.arcTo(x, y, x + w, y, r);
+        this.ctx.closePath();
+        if (fillStyle) {
+            this.ctx.fillStyle = fillStyle as any;
+            this.ctx.fill();
+        }
+        if (strokeStyle) {
+            this.ctx.strokeStyle = strokeStyle;
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
+        }
+        this.ctx.restore();
+    }
+
     private drawModulePanel() {
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        this.ctx.fillRect(10, 170, 340, 160);
-        this.ctx.strokeStyle = '#00ff00';
-        this.ctx.strokeRect(10, 170, 340, 160);
+        const panelX = 10, panelY = 170, panelW = 360, panelH = 160;
+        const g = this.ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+        g.addColorStop(0, 'rgba(5,5,5,0.7)');
+        g.addColorStop(1, 'rgba(12,12,12,0.45)');
+        this.drawRoundedRect(panelX, panelY, panelW, panelH, 10, g, '#66ff66');
 
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = '16px Arial';
@@ -294,12 +363,12 @@ export class UI {
         const overlayX = (canvas.width - overlayWidth) / 2;
         const overlayY = (canvas.height - overlayHeight) / 2;
 
-        // Draw overlay background
+        // Draw overlay background (rounded, slightly transparent)
         this.ctx.save();
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-        this.ctx.fillRect(overlayX, overlayY, overlayWidth, overlayHeight);
-        this.ctx.strokeStyle = '#00ff00';
-        this.ctx.strokeRect(overlayX, overlayY, overlayWidth, overlayHeight);
+        const g = this.ctx.createLinearGradient(overlayX, overlayY, overlayX, overlayY + overlayHeight);
+        g.addColorStop(0, 'rgba(8, 8, 16, 0.94)');
+        g.addColorStop(1, 'rgba(6, 6, 10, 0.7)');
+        this.drawRoundedRect(overlayX, overlayY, overlayWidth, overlayHeight, 12, g, '#33ff88');
 
         // Close button (X)
         const closeBtn: Button = {
@@ -571,14 +640,24 @@ export class UI {
     }
 
     public handleBuildKey(): void {
-        // Behave as if user pressed main menu then build
-        this.overlayState = OverlayState.MainOverlay;
-        this.buildCategory = null;
+        // Toggle build overlay: open if closed, close if already open
+        if (this.overlayState === OverlayState.MainOverlay || this.overlayState === OverlayState.BuildList) {
+            this.overlayState = OverlayState.None;
+            this.buildCategory = null;
+            this.showQuickButtons = false;
+        } else {
+            this.overlayState = OverlayState.MainOverlay;
+            this.buildCategory = null;
+        }
     }
 
     public handleResearchKey(): void {
-        // Open research overlay directly
-        this.overlayState = OverlayState.Research;
+        // Toggle research overlay
+        if (this.overlayState === OverlayState.Research) {
+            this.overlayState = OverlayState.None;
+        } else {
+            this.overlayState = OverlayState.Research;
+        }
     }
 
     private drawResearchTree(overlayX: number, overlayY: number, overlayWidth: number, overlayHeight: number) {

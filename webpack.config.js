@@ -23,7 +23,7 @@ module.exports = {
         directory: path.join(__dirname, 'dist'),
     },
     compress: true,
-    port: 5175,
+    port: process.env.PORT ? Number(process.env.PORT) : 5175,
     open: true
   },
   mode: 'development'
