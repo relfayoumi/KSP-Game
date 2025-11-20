@@ -68,4 +68,3 @@ Have questions or suggestions? Open an issue or contact the repository owner.
 ---
 
 *Blast off into adventure with KSP-Game today!*
-```
